@@ -56,16 +56,16 @@ export default function DashboardPage() {
     }
 
     onProgress("completed");
-
+    const parsedTokenId: string | number | undefined = undefined;
     return {
       hash: tx.hash,
       explorerUrl: `${process.env.NEXT_PUBLIC_ARC_EXPLORER_URL || ARC_NETWORK.blockExplorerUrls[0]}/tx/${tx.hash}`,
-      tokenId
+     tokenId: parsedTokenId ? parsedTokenId : undefined
     };
   }
 
   return (
-    <main className="min-h-screen bg-[#090c12] text-white">
+    <main className="min-h-screen bg-[#535353] text-white">
       <Header />
       <section className="py-14">
         <Container>
