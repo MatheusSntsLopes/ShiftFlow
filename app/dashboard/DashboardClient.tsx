@@ -3,21 +3,20 @@
 import { Header } from "@/components/Header";
 import { TransferForm } from "@/components/TransferForm";
 import { Container } from "@/components/ui";
-import type { QuoteResponse, TransferRequest, TransferStatus } from "@/lib/types";
 import { ARC_NETWORK } from "@/lib/arc";
-import { BrowserProvider, Contract } from "ethers";
+import { SHIFT_DESIGNS } from "@/lib/designs";
+import { extractMintedTokenId, fetchMintedNftPreview, getGiftArcWriteContract } from "@/lib/giftarc";
+import type { QuoteResponse, TransferRequest, TransferResult, TransferStatus } from "@/lib/types";
+import { BrowserProvider } from "ethers";
 import { useEffect, useState } from "react";
 
 declare global {
   interface Window {
-    ethereum?: any;
+    ethereum?: {
+      request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+    };
   }
 }
-
-const GIFTARC_ABI = [
-  "function mintFee() view returns (uint256)",
-  "function mintGift(string rarity,uint256 visualAmount,string designName,string imageURI,string message) payable returns (uint256)"
-];
 
 export default function DashboardClient({ email }: { email: string }) {
   const [provider, setProvider] = useState<BrowserProvider | null>(null);
@@ -32,9 +31,9 @@ export default function DashboardClient({ email }: { email: string }) {
     const res = await fetch("/api/quote", {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
+        "Content-Type": "application/json"
       },
-      body: JSON.stringify(req),
+      body: JSON.stringify(req)
     });
 
     if (!res.ok) {
@@ -44,71 +43,62 @@ export default function DashboardClient({ email }: { email: string }) {
     return res.json();
   }
 
-async function handleTransfer(
-  req: TransferRequest,
-  onProgress: (status: TransferStatus) => void
-): Promise<{
-  hash?: string;
-  explorerUrl?: string;
-  tokenId?: string | number;
-}> {
-  if (!provider) throw new Error("Wallet provider missing");
-
-  onProgress("wallet_ready");
-
-  // 🔁 garante que está na Arc
-  await window.ethereum.request({
-    method: "wallet_switchEthereumChain",
-    params: [{ chainId: ARC_NETWORK.chainIdHex }],
-  }).catch(async (err: any) => {
-    if (err?.code === 4902) {
-      await window.ethereum.request({
-        method: "wallet_addEthereumChain",
-        params: [ARC_NETWORK],
-      });
-    } else {
-      throw err;
+  async function handleTransfer(
+    req: TransferRequest,
+    onProgress: (status: TransferStatus) => void
+  ): Promise<TransferResult> {
+    if (!provider || !window.ethereum) {
+      throw new Error("Wallet provider missing");
     }
-  });
 
-  const signer = await provider.getSigner();
+    onProgress("wallet_ready");
 
-  const contract = new Contract(
-    process.env.NEXT_PUBLIC_GIFTARC_CONTRACT!,
-    GIFTARC_ABI,
-    signer
-  );
+    await window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: ARC_NETWORK.chainIdHex }]
+    }).catch(async (err: { code?: number }) => {
+      if (err?.code === 4902) {
+        await window.ethereum?.request({
+          method: "wallet_addEthereumChain",
+          params: [ARC_NETWORK]
+        });
+      } else {
+        throw err;
+      }
+    });
 
-  onProgress("approval_pending");
+    const contract = await getGiftArcWriteContract(provider);
+    const design = SHIFT_DESIGNS.find((item) => item.id === req.designName) ?? SHIFT_DESIGNS[1];
 
-  // 💰 pega fee do contrato
-  const mintFee = await contract.mintFee();
+    onProgress("approval_pending");
+    const mintFee = await contract.mintFee();
 
-  onProgress("bridging");
+    onProgress("bridging");
+    const tx = await contract.mintGift(
+      design.rarity,
+      Math.max(1, Math.floor(req.amount || design.amount)),
+      design.id,
+      design.imageURI,
+      `ShiftFlow route for ${req.email}`,
+      { value: mintFee }
+    );
 
-  // 🚀 mint real
-  const tx = await contract.mintGift(
-    "SHIFT", // rarity
-    Math.floor(req.amount || 1), // valor visual
-    "shiftflow", // design
-    "ipfs://placeholder", // pode trocar depois
-    `Transfer for ${req.email}`,
-    { value: mintFee }
-  );
+    onProgress("attesting");
+    const receipt = await tx.wait();
 
-  onProgress("attesting");
+    onProgress("minting");
+    const tokenId = receipt ? extractMintedTokenId(receipt) : undefined;
+    const nft = tokenId ? await fetchMintedNftPreview(provider, tokenId) : undefined;
 
-  const receipt = await tx.wait();
+    onProgress("completed");
 
-  onProgress("minting");
-  onProgress("completed");
-
-  return {
-    hash: tx.hash,
-    explorerUrl: `${process.env.NEXT_PUBLIC_ARC_EXPLORER_URL}/tx/${tx.hash}`,
-    tokenId: undefined
-  };
-}
+    return {
+      hash: tx.hash,
+      explorerUrl: `${process.env.NEXT_PUBLIC_ARC_EXPLORER_URL || ARC_NETWORK.blockExplorerUrls[0]}/tx/${tx.hash}`,
+      tokenId,
+      nft: nft || undefined
+    };
+  }
 
   return (
     <main className="min-h-screen bg-[#090c12] text-white">
@@ -118,10 +108,10 @@ async function handleTransfer(
           <div className="mb-8">
             <div className="text-sm uppercase tracking-[0.18em] text-white/35">Dashboard</div>
             <h1 className="mt-3 text-4xl font-semibold tracking-tight">
-              Move USDC with a softer workflow
+              Move through the flow. Settle on Arc.
             </h1>
             <p className="mt-3 max-w-2xl text-white/55">
-              This version is Arc-first and completes with a real onchain action on Arc.
+              This version completes with a real Arc transaction and mints a receipt-style NFT from your deployed GiftArc contract.
             </p>
           </div>
 
