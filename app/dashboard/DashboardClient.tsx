@@ -44,67 +44,71 @@ export default function DashboardClient({ email }: { email: string }) {
     return res.json();
   }
 
-  async function handleTransfer(
-    req: TransferRequest,
-    onProgress: (status: TransferStatus) => void
-  ): Promise<{
-    hash?: string;
-    explorerUrl?: string;
-    tokenId?: string | number;
-  }> {
-    if (!provider) throw new Error("Wallet provider missing");
+async function handleTransfer(
+  req: TransferRequest,
+  onProgress: (status: TransferStatus) => void
+): Promise<{
+  hash?: string;
+  explorerUrl?: string;
+  tokenId?: string | number;
+}> {
+  if (!provider) throw new Error("Wallet provider missing");
 
-    onProgress("wallet_ready");
+  onProgress("wallet_ready");
 
-    await window.ethereum.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: ARC_NETWORK.chainIdHex }],
-    }).catch(async (err: any) => {
-      if (err?.code === 4902) {
-        await window.ethereum.request({
-          method: "wallet_addEthereumChain",
-          params: [ARC_NETWORK],
-        });
-      } else {
-        throw err;
-      }
-    });
+  // 🔁 garante que está na Arc
+  await window.ethereum.request({
+    method: "wallet_switchEthereumChain",
+    params: [{ chainId: ARC_NETWORK.chainIdHex }],
+  }).catch(async (err: any) => {
+    if (err?.code === 4902) {
+      await window.ethereum.request({
+        method: "wallet_addEthereumChain",
+        params: [ARC_NETWORK],
+      });
+    } else {
+      throw err;
+    }
+  });
 
-    const signer = await provider.getSigner();
-    const contract = new Contract(
-      process.env.NEXT_PUBLIC_GIFTARC_CONTRACT!,
-      GIFTARC_ABI,
-      signer
-    );
+  const signer = await provider.getSigner();
 
-    onProgress("approval_pending");
+  const contract = new Contract(
+    process.env.NEXT_PUBLIC_GIFTARC_CONTRACT!,
+    GIFTARC_ABI,
+    signer
+  );
 
-    const mintFee = await contract.mintFee();
+  onProgress("approval_pending");
 
-    onProgress("bridging");
+  // 💰 pega fee do contrato
+  const mintFee = await contract.mintFee();
 
-    const tx = await contract.mintGift(
-      "SHIFT",
-      Math.floor(req.amount),
-      "shiftflow-route",
-      "data:image/svg+xml;base64,PHN2Zy8+",
-      `Transfer for ${req.email}`,
-      { value: mintFee }
-    );
+  onProgress("bridging");
 
-    onProgress("attesting");
+  // 🚀 mint real
+  const tx = await contract.mintGift(
+    "SHIFT", // rarity
+    Math.floor(req.amount || 1), // valor visual
+    "shiftflow", // design
+    "ipfs://placeholder", // pode trocar depois
+    `Transfer for ${req.email}`,
+    { value: mintFee }
+  );
 
-    await tx.wait();
+  onProgress("attesting");
 
-    onProgress("minting");
-    onProgress("completed");
+  const receipt = await tx.wait();
 
-    return {
-      hash: tx.hash,
-      explorerUrl: `${process.env.NEXT_PUBLIC_ARC_EXPLORER_URL || ARC_NETWORK.blockExplorerUrls[0]}/tx/${tx.hash}`,
-      tokenId: undefined,
-    };
-  }
+  onProgress("minting");
+  onProgress("completed");
+
+  return {
+    hash: tx.hash,
+    explorerUrl: `${process.env.NEXT_PUBLIC_ARC_EXPLORER_URL}/tx/${tx.hash}`,
+    tokenId: undefined
+  };
+}
 
   return (
     <main className="min-h-screen bg-[#090c12] text-white">
